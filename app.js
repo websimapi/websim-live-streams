@@ -17,6 +17,7 @@ function renderStreams(streams) {
             <a href="/stream.html?id=${streamId}" class="stream-card">
                 <h3>${streamData.title}</h3>
                 <p>Streamed by ${streamData.ownerUsername}</p>
+                <p>${streamData.isLive ? '🔴 Live' : 'Offline'}</p>
             </a>
         `;
     });
@@ -57,4 +58,3 @@ async function init() {
 }
 
 init();
-

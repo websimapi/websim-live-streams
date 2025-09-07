@@ -17,14 +17,15 @@ const chatInput = document.getElementById('chat-input');
 const sendChatBtn = document.getElementById('send-chat-btn');
 
 let localMediaStream = null;
-let frameCaptureInterval = null;
-let mediaRecorder = null; // For audio recording
-const FPS = 2; // Capture 2 frames per second
+let mediaRecorder = null;
+const CHUNK_DURATION = 1000; // milliseconds
 
-// For viewer audio playback
-let audioContext;
-let nextAudioTime = 0;
-let lastAudioTimestamp = 0;
+// For viewer video/audio playback
+let mediaSource;
+let sourceBuffer;
+let mediaQueue = [];
+let isAppending = false;
+let viewerVideoElement;
 
 function renderChat(messages) {
     const messageList = messages ? Object.values(messages).sort((a, b) => b.timestamp - a.timestamp) : [];
@@ -42,91 +43,57 @@ function renderChat(messages) {
     render(html`${chatContent}`, chatMessages);
 }
 
-async function captureAndUploadFrame() {
-    if (!localMediaStream) return;
-
-    const videoTrack = localMediaStream.getVideoTracks()[0];
-    const imageCapture = new ImageCapture(videoTrack);
-
-    try {
-        const bitmap = await imageCapture.grabFrame();
-        const canvas = document.createElement('canvas');
-        canvas.width = bitmap.width;
-        canvas.height = bitmap.height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(bitmap, 0, 0);
-
-        canvas.toBlob(async (blob) => {
-            if (!blob) return;
-            try {
-                const url = await window.websim.upload(blob);
-                room.updatePresence({
-                    streamFrameUrl: url,
-                    frameTimestamp: Date.now()
-                });
-            } catch (e) {
-                console.error("Upload failed:", e);
-                statusText.textContent = "Error: Could not upload frame.";
-            }
-        }, 'image/jpeg', 0.6);
-
-    } catch (e) {
-        console.error("Frame capture failed:", e);
-    }
-}
-
 async function startSharing() {
     try {
         localMediaStream = await navigator.mediaDevices.getDisplayMedia({
-            video: { frameRate: FPS },
+            video: {
+                frameRate: 15,
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            },
             audio: true
         });
 
+        streamView.innerHTML = '';
         const video = document.createElement('video');
         video.srcObject = localMediaStream;
         video.muted = true;
-        video.play();
-        
-        // Hide video element, we only need it for capturing
-        video.style.display = 'none';
-        document.body.appendChild(video);
-        
-        streamView.innerHTML = '';
-        const img = document.createElement('img');
-        img.alt = 'Your screen share preview';
-        streamView.appendChild(img);
-
+        video.autoplay = true;
+        video.playsInline = true;
+        video.style.width = '100%';
+        video.style.height = '100%';
+        video.style.objectFit = 'contain';
+        streamView.appendChild(video);
 
         localMediaStream.getVideoTracks()[0].onended = stopSharing;
         
-        // --- Audio Recording Setup ---
-        if (localMediaStream.getAudioTracks().length > 0) {
-            const audioStream = new MediaStream(localMediaStream.getAudioTracks());
-            mediaRecorder = new MediaRecorder(audioStream);
-
-            mediaRecorder.ondataavailable = async (event) => {
-                if (event.data.size > 0) {
-                    try {
-                        const url = await window.websim.upload(event.data);
-                        room.updatePresence({
-                            audioChunkUrl: url,
-                            audioTimestamp: Date.now()
-                        });
-                    } catch (e) {
-                        console.error("Audio upload failed:", e);
-                    }
-                }
-            };
-            
-            mediaRecorder.start(1000); // Create a chunk every second
-            statusText.textContent = 'Streaming live with audio!';
-        } else {
-            statusText.textContent = 'Streaming live! (No audio)';
+        const mimeType = 'video/webm; codecs="vp8, opus"';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+            statusText.textContent = "Error: Browser doesn't support required video format.";
+            stopSharing();
+            return;
         }
-        // --- End Audio Recording Setup ---
+
+        mediaRecorder = new MediaRecorder(localMediaStream, { mimeType });
+
+        mediaRecorder.ondataavailable = async (event) => {
+            if (event.data.size > 0) {
+                try {
+                    const url = await window.websim.upload(event.data);
+                    room.updatePresence({
+                        mediaChunkUrl: url,
+                        mediaTimestamp: Date.now()
+                    });
+                } catch (e) {
+                    console.error("Media chunk upload failed:", e);
+                }
+            }
+        };
+        
+        mediaRecorder.start(CHUNK_DURATION);
+        statusText.textContent = `Streaming live! ${localMediaStream.getAudioTracks().length > 0 ? '(with audio)' : '(no audio)'}`;
         
         room.updateRoomState({ streams: { [streamId]: { ...room.roomState.streams[streamId], isLive: true } } });
-        frameCaptureInterval = setInterval(captureAndUploadFrame, 1000 / FPS);
 
         startSharingBtn.classList.add('hidden');
         stopSharingBtn.classList.remove('hidden');
@@ -142,18 +109,14 @@ function stopSharing() {
         localMediaStream.getTracks().forEach(track => track.stop());
         localMediaStream = null;
     }
-    if (frameCaptureInterval) {
-        clearInterval(frameCaptureInterval);
-        frameCaptureInterval = null;
-    }
-
+   
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop();
         mediaRecorder = null;
     }
 
     room.updateRoomState({ streams: { [streamId]: { ...room.roomState.streams[streamId], isLive: false } } });
-    room.updatePresence({ streamFrameUrl: null, frameTimestamp: null, audioChunkUrl: null, audioTimestamp: null });
+    room.updatePresence({ mediaChunkUrl: null, mediaTimestamp: null });
 
     startSharingBtn.classList.remove('hidden');
     stopSharingBtn.classList.add('hidden');
@@ -161,64 +124,85 @@ function stopSharing() {
     streamView.innerHTML = '<p>You have stopped sharing.</p>';
 }
 
-async function playAudioChunk(url) {
-    if (!audioContext) {
-        try {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        } catch(e) {
-            console.error("Web Audio API is not supported in this browser");
-            return;
+function setupMediaSource() {
+    viewerVideoElement = document.createElement('video');
+    viewerVideoElement.autoplay = true;
+    viewerVideoElement.playsInline = true;
+    viewerVideoElement.style.width = '100%';
+    viewerVideoElement.style.height = '100%';
+    viewerVideoElement.style.objectFit = 'contain';
+    streamView.innerHTML = '';
+    streamView.appendChild(viewerVideoElement);
+    
+    mediaSource = new MediaSource();
+    viewerVideoElement.src = URL.createObjectURL(mediaSource);
+
+    mediaSource.addEventListener('sourceopen', () => {
+        sourceBuffer = mediaSource.addSourceBuffer('video/webm; codecs="vp8, opus"');
+        sourceBuffer.addEventListener('updateend', () => {
+            isAppending = false;
+            if (mediaQueue.length > 0) {
+                appendNextChunk();
+            }
+        });
+        // Start processing queue if anything arrived early
+        if (mediaQueue.length > 0) {
+             appendNextChunk();
         }
+    });
+}
+
+async function appendNextChunk() {
+    if (isAppending || mediaQueue.length === 0 || !sourceBuffer || sourceBuffer.updating) {
+        return;
+    }
+    isAppending = true;
+    const arrayBuffer = mediaQueue.shift();
+    try {
+        sourceBuffer.appendBuffer(arrayBuffer);
+    } catch (e) {
+        console.error("Error appending buffer:", e);
+        isAppending = false;
+    }
+}
+
+async function playMediaChunk(url) {
+    if (!mediaSource) {
+        setupMediaSource();
     }
     
     try {
         const response = await fetch(url);
         if (!response.ok) return;
         const arrayBuffer = await response.arrayBuffer();
-        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-        
-        const source = audioContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioContext.destination);
-        
-        const currentTime = audioContext.currentTime;
-        if (currentTime > nextAudioTime) {
-            nextAudioTime = currentTime;
-        }
-        
-        source.start(nextAudioTime);
-        nextAudioTime += audioBuffer.duration;
+        mediaQueue.push(arrayBuffer);
 
+        if (sourceBuffer && !sourceBuffer.updating) {
+            appendNextChunk();
+        }
     } catch(e) {
-        console.error("Error playing audio chunk:", e);
+        console.error("Error fetching or queueing media chunk:", e);
     }
 }
 
+let lastMediaTimestamp = 0;
+
 function updateViewer(streamerPresence) {
-    if (streamerPresence?.streamFrameUrl) {
-        let img = streamView.querySelector('img');
-        if (!img) {
-            streamView.innerHTML = '';
-            img = document.createElement('img');
-            img.alt = "Live stream feed";
-            streamView.appendChild(img);
-        }
-        // Only update src if it's a new frame
-        if (img.src !== streamerPresence.streamFrameUrl) {
-            img.src = streamerPresence.streamFrameUrl;
+    const currentStream = room.roomState.streams?.[streamId];
+
+    if (currentStream?.isLive) {
+        if (streamerPresence?.mediaChunkUrl && streamerPresence.mediaTimestamp > lastMediaTimestamp) {
+            lastMediaTimestamp = streamerPresence.mediaTimestamp;
+            playMediaChunk(streamerPresence.mediaChunkUrl);
+        } else if (!viewerVideoElement) {
+             streamView.innerHTML = `<p>Stream is live, waiting for video data...</p>`;
         }
     } else {
-        const currentStream = room.roomState.streams?.[streamId];
-        if (currentStream && currentStream.isLive) {
-            streamView.innerHTML = `<p>Stream is live, waiting for frames...</p>`;
-        } else {
-            streamView.innerHTML = `<p>Stream is offline.</p>`;
-        }
-    }
-
-    if (streamerPresence?.audioChunkUrl && streamerPresence.audioTimestamp > lastAudioTimestamp) {
-        lastAudioTimestamp = streamerPresence.audioTimestamp;
-        playAudioChunk(streamerPresence.audioChunkUrl);
+        streamView.innerHTML = `<p>Stream is offline.</p>`;
+        if(viewerVideoElement) viewerVideoElement = null;
+        if(mediaSource) mediaSource = null;
+        mediaQueue = [];
+        lastMediaTimestamp = 0;
     }
 }
 
@@ -263,9 +247,8 @@ async function init() {
         stopSharingBtn.onclick = stopSharing;
         statusText.textContent = "Ready to stream. Click 'Start Screen Share'.";
         
-        // Add a handler to clean up when the page is closed
         window.addEventListener('beforeunload', () => {
-            // This attempts to remove the stream, but may not always run
+            stopSharing();
             room.updateRoomState({ streams: { [streamId]: null } });
         });
 
@@ -287,15 +270,6 @@ async function init() {
     room.subscribePresence((presence) => {
         if (!isOwner) {
             updateViewer(presence[streamId]);
-        } else {
-             // update my own preview
-            const myPresence = presence[room.clientId];
-             if(myPresence?.streamFrameUrl) {
-                const img = streamView.querySelector('img');
-                if (img && img.src !== myPresence.streamFrameUrl) {
-                    img.src = myPresence.streamFrameUrl;
-                }
-            }
         }
     });
 
