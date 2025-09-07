@@ -1,0 +1,178 @@
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background-color: #121212;
+    color: #e0e0e0;
+    margin: 0;
+    line-height: 1.6;
+}
+
+#app {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #333;
+    padding-bottom: 1rem;
+    margin-bottom: 2rem;
+}
+
+h1 {
+    color: #fff;
+}
+
+button {
+    background-color: #bb86fc;
+    color: #121212;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+button:hover {
+    background-color: #a76aee;
+}
+
+button.hidden {
+    display: none;
+}
+
+#streams-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
+}
+
+.stream-card {
+    background-color: #1e1e1e;
+    border-radius: 8px;
+    padding: 1.5rem;
+    text-decoration: none;
+    color: #e0e0e0;
+    transition: transform 0.2s, box-shadow 0.2s;
+    border: 1px solid #333;
+}
+
+.stream-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+}
+
+.stream-card h3 {
+    margin: 0 0 0.5rem 0;
+    color: #bb86fc;
+}
+
+.stream-card p {
+    margin: 0;
+    color: #aaa;
+}
+
+/* Stream Page Styles */
+.stream-app {
+    padding-top: 1rem;
+}
+
+.back-link {
+    color: #bb86fc;
+    text-decoration: none;
+    font-size: 1rem;
+    margin-bottom: 1rem;
+    display: inline-block;
+}
+
+.stream-layout {
+    display: flex;
+    gap: 2rem;
+}
+
+.stream-container {
+    flex: 3;
+}
+
+.chat-container {
+    flex: 1;
+    background-color: #1e1e1e;
+    border-radius: 8px;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    height: 70vh;
+}
+
+.stream-view {
+    background-color: #000;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border-radius: 8px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: #555;
+    font-size: 1.2rem;
+    position: relative;
+    overflow: hidden;
+}
+
+.stream-view img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+#streamer-controls {
+    margin-top: 1rem;
+    text-align: center;
+}
+
+#status-text {
+    margin-top: 0.5rem;
+    color: #aaa;
+}
+
+#chat-messages {
+    flex-grow: 1;
+    overflow-y: auto;
+    margin-bottom: 1rem;
+    display: flex;
+    flex-direction: column-reverse;
+}
+
+.chat-message {
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+    border-radius: 4px;
+}
+
+.chat-message strong {
+    color: #bb86fc;
+    margin-right: 0.5em;
+}
+
+.chat-input {
+    display: flex;
+}
+
+#chat-input {
+    flex-grow: 1;
+    background-color: #333;
+    border: 1px solid #444;
+    color: #e0e0e0;
+    padding: 0.5rem;
+    border-radius: 4px;
+    margin-right: 0.5rem;
+}
+
+#chat-input:focus {
+    outline: none;
+    border-color: #bb86fc;
+}
+
